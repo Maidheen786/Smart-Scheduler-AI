@@ -1,0 +1,7 @@
+project_id = "knfvmeodxpyjesbralqc"
+
+[functions.generate-timetable]
+verify_jwt = false
+
+[functions.timetable-chat]
+verify_jwt = false
