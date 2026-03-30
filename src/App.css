@@ -5,38 +5,190 @@
   text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+/* Modern Button Animations */
+button {
+  @apply transition-all duration-300 ease-out;
 }
 
-@keyframes logo-spin {
+button:hover {
+  @apply shadow-lg;
+}
+
+button:active {
+  @apply scale-95;
+}
+
+/* Primary buttons with gradient and glow */
+button[class*="bg-primary"],
+button[class*="bg-accent"],
+button[class*="bg-secondary"] {
+  position: relative;
+  overflow: hidden;
+  @apply transition-all duration-300;
+}
+
+button[class*="bg-primary"]:hover,
+button[class*="bg-accent"]:hover,
+button[class*="bg-secondary"]:hover {
+  @apply shadow-xl shadow-purple-500/40;
+}
+
+button[class*="bg-accent"]:hover {
+  @apply shadow-xl shadow-orange-500/40;
+}
+
+button[class*="bg-secondary"]:hover {
+  @apply shadow-xl shadow-teal-500/40;
+}
+
+/* Gradient background animation for cards */
+.gradient-card {
+  background: linear-gradient(135deg, var(--shade-primary-light), var(--shade-secondary), var(--shade-accent-light));
+  background-size: 200% 200%;
+  @apply animate-gradient-shift;
+}
+
+/* Smooth fade in for all interactive elements */
+a, button, [role="button"] {
+  @apply transition-all duration-200;
+}
+
+/* Link hover effects */
+a:hover {
+  @apply opacity-80;
+}
+
+/* Card hover effects */
+[class*="card"]:hover {
+  @apply shadow-xl transition-all duration-300;
+}
+
+/* Input field animations */
+input, textarea, select {
+  @apply transition-colors duration-300;
+}
+
+input:focus, 
+textarea:focus, 
+select:focus {
+  @apply ring-2 ring-offset-2;
+}
+
+/* Animation for badge/labels */
+.badge, [class*="badge"] {
+  @apply animate-slide-in;
+}
+
+/* Smooth page transitions */
+@keyframes fadeInUp {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
+    transform: translateY(20px);
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
   }
 }
 
-.card {
-  padding: 2em;
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
 }
 
-.read-the-docs {
-  color: #888;
+.animate-float {
+  animation: float 3s ease-in-out infinite;
 }
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.6s ease-out;
+}
+
+/* Gradient text for headings */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--shade-primary)), hsl(var(--shade-accent)));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Premium glass-morphism effect */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.glass.dark {
+  background: rgba(20, 20, 30, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Smooth transitions for theme changes */
+* {
+  @apply transition-colors duration-300;
+}
+
+/* Enhanced button styling */
+button[class*="btn"], [role="button"] {
+  @apply relative transform hover:scale-105 active:scale-95 transition-all duration-200;
+}
+
+/* Skeleton loading animation */
+@keyframes skeleton-loading {
+  0% {
+    background-color: hsl(var(--muted));
+  }
+  50% {
+    background-color: hsl(var(--muted-foreground));
+  }
+  100% {
+    background-color: hsl(var(--muted));
+  }
+}
+
+.skeleton {
+  animation: skeleton-loading 1.5s infinite;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Enhanced focus states for accessibility */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  @apply outline-none ring-2 ring-offset-2 ring-accent;
+}
+
+/* Gradient border animation */
+.gradient-border {
+  position: relative;
+  padding: 1px;
+  background: linear-gradient(135deg, hsl(var(--shade-primary)), hsl(var(--shade-secondary)), hsl(var(--shade-accent)));
+  border-radius: var(--radius);
+}
+
+.gradient-border > * {
+  background: hsl(var(--card));
+  border-radius: calc(var(--radius) - 1px);
+}
+

@@ -4,7 +4,7 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Loader2, Bot, User } from "lucide-react";
+import { Send, Loader2, Bot, User, Mic, MicOff } from "lucide-react";
 import BackButton from "@/components/BackButton";
 import ReactMarkdown from "react-markdown";
 
@@ -20,11 +20,72 @@ export default function Help() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const SpeechRecognition = window.webkitSpeechRecognition || (window as any).SpeechRecognition;
+    
+    if (SpeechRecognition) {
+      setVoiceSupported(true);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+      
+      recognition.onresult = (event: any) => {
+        let interimTranscript = "";
+        let finalTranscript = "";
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + " ";
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+        
+        if (finalTranscript) {
+          setInput((prev) => prev + finalTranscript);
+        }
+      };
+      
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+      
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+      
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current) return;
+    
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      setInput(""); // Clear input when starting new recording
+      recognitionRef.current.start();
+    }
+  };
 
   const send = async () => {
     if (!input.trim() || loading) return;
@@ -35,6 +96,11 @@ export default function Help() {
 
     try {
       const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/timetable-chat`;
+      
+      if (!CHAT_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) {
+        throw new Error("Supabase configuration missing");
+      }
+
       const resp = await fetch(CHAT_URL, {
         method: "POST",
         headers: {
@@ -42,23 +108,32 @@ export default function Help() {
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({
-          messages: [...messages, userMsg].filter((m) => m.role !== "assistant" || messages.indexOf(m) > 0),
+          messages: [...messages, userMsg],
           userId: user?.id,
         }),
       });
 
-      if (!resp.ok || !resp.body) throw new Error("Failed to start stream");
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`Response error: ${resp.status}`, errText);
+        throw new Error(`Server responded with ${resp.status}: ${errText}`);
+      }
+
+      if (!resp.body) {
+        throw new Error("No response body from server");
+      }
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let textBuffer = "";
       let assistantSoFar = "";
+      let receivedAnyData = false;
 
       const upsertAssistant = (chunk: string) => {
         assistantSoFar += chunk;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === "assistant" && prev.length > 1 && last.content !== messages[0]?.content) {
+          if (last?.role === "assistant" && prev.length > 1) {
             return prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: assistantSoFar } : m));
           }
           return [...prev, { role: "assistant", content: assistantSoFar }];
@@ -69,6 +144,7 @@ export default function Help() {
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
+        
         textBuffer += decoder.decode(value, { stream: true });
 
         let newlineIndex: number;
@@ -76,24 +152,46 @@ export default function Help() {
           let line = textBuffer.slice(0, newlineIndex);
           textBuffer = textBuffer.slice(newlineIndex + 1);
           if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
+          if (line.trim() === "") continue;
           if (!line.startsWith("data: ")) continue;
+          
           const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") { streamDone = true; break; }
+          if (jsonStr === "[DONE]") { 
+            streamDone = true; 
+            break; 
+          }
+          
           try {
             const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (content) upsertAssistant(content);
-          } catch {
-            textBuffer = line + "\n" + textBuffer;
-            break;
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) {
+              receivedAnyData = true;
+              upsertAssistant(content);
+            }
+          } catch (e) {
+            console.error("Parse error for line:", jsonStr, e);
+            continue;
           }
         }
       }
+
+      // Finish any remaining buffer
+      if (textBuffer.trim()) {
+        textBuffer = "";
+      }
+
+      if (!receivedAnyData && assistantSoFar === "") {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "No response from AI. Please ensure OpenAI API key is configured in Supabase." },
+        ]);
+      }
     } catch (err: any) {
+      console.error("Chat error details:", err);
+      const errorMsg = err.message || "Failed to fetch response";
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Sorry, I encountered an error. Please try again." },
+        { role: "assistant", content: `⚠️ Error: ${errorMsg}. Please check that:\n1. You have added OPENAI_API_KEY to Supabase Secrets\n2. At least 2-3 minutes have passed since adding the key\n3. Your Supabase project is configured correctly` },
       ]);
     } finally {
       setLoading(false);
@@ -171,6 +269,23 @@ export default function Help() {
               placeholder="Ask about your timetable..."
               className="flex-1"
             />
+            {voiceSupported && (
+              <Button
+                type="button"
+                onClick={toggleVoiceInput}
+                disabled={loading}
+                size="icon"
+                variant={isListening ? "default" : "outline"}
+                className={isListening ? "animate-pulse bg-red-500 hover:bg-red-600" : ""}
+                title={isListening ? "Stop listening" : "Start voice input"}
+              >
+                {isListening ? (
+                  <MicOff className="h-4 w-4" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
+              </Button>
+            )}
             <Button type="submit" disabled={loading} size="icon" className="btn-glow">
               <Send className="h-4 w-4" />
             </Button>

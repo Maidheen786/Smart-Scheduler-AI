@@ -11,6 +11,8 @@ import InstitutionType from "./pages/create/InstitutionType";
 import ClassDetails from "./pages/create/ClassDetails";
 import StaffDetails from "./pages/create/StaffDetails";
 import TimetableSetup from "./pages/create/TimetableSetup";
+import ThemeSelection from "./pages/create/ThemeSelection";
+import GenerateTimetable from "./pages/create/GenerateTimetable";
 import TimetableView from "./pages/TimetableView";
 import TimetableList from "./pages/TimetableList";
 import Help from "./pages/Help";
@@ -30,9 +32,11 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create" element={<InstitutionType />} />
+            <Route path="/create/setup" element={<TimetableSetup />} />
             <Route path="/create/classes" element={<ClassDetails />} />
             <Route path="/create/staff" element={<StaffDetails />} />
-            <Route path="/create/setup" element={<TimetableSetup />} />
+            <Route path="/create/theme" element={<ThemeSelection />} />
+            <Route path="/create/generate" element={<GenerateTimetable />} />
             <Route path="/timetable/:id" element={<TimetableView />} />
             <Route path="/timetables" element={<TimetableList />} />
             <Route path="/help" element={<Help />} />

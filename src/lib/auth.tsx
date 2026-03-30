@@ -36,17 +36,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = async (email: string, password: string, username: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { username } },
-    });
-    if (error) throw error;
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username } },
+      });
+      if (error) {
+        console.error('SignUp Error:', error);
+        throw error;
+      }
+    } catch (err: any) {
+      console.error('SignUp Exception:', err);
+      throw new Error(err.message || 'Failed to sign up. Please check your internet connection and try again.');
+    }
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        console.error('SignIn Error:', error);
+        throw error;
+      }
+    } catch (err: any) {
+      console.error('SignIn Exception:', err);
+      throw new Error(err.message || 'Failed to sign in. Please check your internet connection and try again.');
+    }
   };
 
   const signOut = async () => {

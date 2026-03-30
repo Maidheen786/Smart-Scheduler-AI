@@ -110,48 +110,77 @@ serve(async (req) => {
         ? remainingHours - hoursPerCoreAllied * coreAllied.length
         : remainingHours;
 
-      // Build assignment list
-      interface SlotAssignment {
+      // **CONSISTENCY FIX:** Pre-assign each subject to a specific staff member
+      interface SubjectStaffAssignment {
         subjectId: string;
-        staffId: string | null;
+        primaryStaffId: string | null;
+        alternativeStaffIds: string[];
+        hoursNeeded: number;
       }
 
-      const assignmentList: SlotAssignment[] = [];
+      const subjectStaffMap: Record<string, SubjectStaffAssignment> = {};
 
       for (const sub of coreAllied) {
         const h = hoursPerCoreAllied + (extraHours > 0 ? 1 : 0);
         if (extraHours > 0) extraHours--;
 
-        // Find staff for this subject
+        // Find all qualified staff for this subject
         const possibleStaff = staffSubjectMap
           .filter((ss) => ss.subjectId === sub.id)
           .map((ss) => ss.staffId);
 
-        // If college, prefer same department staff
-        let staffId: string | null = null;
+        // Pick PRIMARY staff for this subject
+        let primaryStaffId: string | null = null;
         if (isCollege && cls.department) {
           const deptStaff = (staff || []).filter(
             (s: any) => s.department === cls.department && possibleStaff.includes(s.id)
           );
-          if (deptStaff.length > 0) staffId = deptStaff[0].id;
+          if (deptStaff.length > 0) primaryStaffId = deptStaff[0].id;
         }
-        if (!staffId && possibleStaff.length > 0) {
-          staffId = possibleStaff[0];
+        if (!primaryStaffId && possibleStaff.length > 0) {
+          primaryStaffId = possibleStaff[0];
         }
 
-        for (let i = 0; i < h; i++) {
-          assignmentList.push({ subjectId: sub.id, staffId });
-        }
+        subjectStaffMap[sub.id] = {
+          subjectId: sub.id,
+          primaryStaffId,
+          alternativeStaffIds: possibleStaff.filter((s) => s !== primaryStaffId),
+          hoursNeeded: h,
+        };
       }
 
       for (const sub of sec) {
         const possibleStaff = staffSubjectMap
           .filter((ss) => ss.subjectId === sub.id)
           .map((ss) => ss.staffId);
-        let staffId: string | null = possibleStaff.length > 0 ? possibleStaff[0] : null;
 
-        for (let i = 0; i < 2; i++) {
-          assignmentList.push({ subjectId: sub.id, staffId });
+        const primaryStaffId = possibleStaff.length > 0 ? possibleStaff[0] : null;
+
+        subjectStaffMap[sub.id] = {
+          subjectId: sub.id,
+          primaryStaffId,
+          alternativeStaffIds: possibleStaff.filter((s) => s !== primaryStaffId),
+          hoursNeeded: 2,
+        };
+      }
+
+      // Build assignment list preserving subject-staff consistency
+      interface SlotAssignment {
+        subjectId: string;
+        primaryStaffId: string | null;
+        alternativeStaffIds: string[];
+      }
+
+      const assignmentList: SlotAssignment[] = [];
+
+      for (const subId in subjectStaffMap) {
+        const assignment = subjectStaffMap[subId];
+        for (let i = 0; i < assignment.hoursNeeded; i++) {
+          assignmentList.push({
+            subjectId: assignment.subjectId,
+            primaryStaffId: assignment.primaryStaffId,
+            alternativeStaffIds: assignment.alternativeStaffIds,
+          });
         }
       }
 
@@ -161,7 +190,7 @@ serve(async (req) => {
         [assignmentList[i], assignmentList[j]] = [assignmentList[j], assignmentList[i]];
       }
 
-      // Place into grid, avoiding staff clashes
+      // Place into grid, maintaining staff consistency for each subject
       const staffSchedule: Record<string, Set<string>> = {};
       let assignIdx = 0;
 
@@ -182,52 +211,43 @@ serve(async (req) => {
             continue;
           }
 
-          let placed = false;
-          // Try to find a non-clashing assignment
-          for (let tryIdx = assignIdx; tryIdx < assignmentList.length; tryIdx++) {
-            const assignment = assignmentList[tryIdx];
-            const slotKey = `${d}-${h}`;
-            const sId = assignment.staffId;
+          const assignment = assignmentList[assignIdx];
+          const slotKey = `${d}-${h}`;
+          let selectedStaffId: string | null = assignment.primaryStaffId;
 
-            if (sId) {
-              if (!staffSchedule[sId]) staffSchedule[sId] = new Set();
-              if (staffSchedule[sId].has(slotKey)) continue; // clash
-              staffSchedule[sId].add(slotKey);
+          // Check if primary staff is available
+          if (selectedStaffId) {
+            if (!staffSchedule[selectedStaffId]) staffSchedule[selectedStaffId] = new Set();
+            if (staffSchedule[selectedStaffId].has(slotKey)) {
+              // Primary staff has a clash, try alternatives
+              selectedStaffId = null;
+              for (const altStaffId of assignment.alternativeStaffIds) {
+                if (!staffSchedule[altStaffId]) staffSchedule[altStaffId] = new Set();
+                if (!staffSchedule[altStaffId].has(slotKey)) {
+                  selectedStaffId = altStaffId;
+                  break;
+                }
+              }
             }
-
-            // Swap to current position
-            [assignmentList[assignIdx], assignmentList[tryIdx]] = [assignmentList[tryIdx], assignmentList[assignIdx]];
-
-            slots.push({
-              timetable_id: timetableId,
-              user_id: userId,
-              class_id: cls.id,
-              day: d,
-              hour: h,
-              subject_id: assignment.subjectId,
-              staff_id: assignment.staffId,
-              is_free: false,
-            });
-            assignIdx++;
-            placed = true;
-            break;
           }
 
-          if (!placed) {
-            // Force place remaining
-            const assignment = assignmentList[assignIdx];
-            slots.push({
-              timetable_id: timetableId,
-              user_id: userId,
-              class_id: cls.id,
-              day: d,
-              hour: h,
-              subject_id: assignment.subjectId,
-              staff_id: assignment.staffId,
-              is_free: false,
-            });
-            assignIdx++;
+          // Add to staff schedule if assigned
+          if (selectedStaffId) {
+            if (!staffSchedule[selectedStaffId]) staffSchedule[selectedStaffId] = new Set();
+            staffSchedule[selectedStaffId].add(slotKey);
           }
+
+          slots.push({
+            timetable_id: timetableId,
+            user_id: userId,
+            class_id: cls.id,
+            day: d,
+            hour: h,
+            subject_id: assignment.subjectId,
+            staff_id: selectedStaffId,
+            is_free: false,
+          });
+          assignIdx++;
         }
       }
     }

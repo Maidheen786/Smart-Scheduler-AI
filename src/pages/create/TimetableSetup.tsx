@@ -2,212 +2,313 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useTimetableStore } from "@/lib/timetable-store";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/auth";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import BackButton from "@/components/BackButton";
-import { toast } from "sonner";
+import { FileText, Calendar, Clock, Zap, Settings } from "lucide-react";
 
 export default function TimetableSetup() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const store = useTimetableStore();
-  const [loading, setLoading] = useState(false);
+  
+  const [name, setName] = useState(store.timetableName || "");
+  const [daysCount, setDaysCount] = useState(store.days || 5);
+  const [hoursPerDay, setHoursPerDay] = useState(store.hoursPerDay || 8);
+  const [allocationMode, setAllocationMode] = useState(store.allocationMode || "default");
 
-  // Check for subjects without staff
-  const allSubjects = Array.from(new Set(store.classes.flatMap((c) => c.subjects.map((s) => s.name))));
-  const staffSubjects = new Set(store.staff.flatMap((s) => s.subjects));
-  const unassigned = allSubjects.filter((s) => !staffSubjects.has(s));
-
-  const handleGenerate = async () => {
-    if (!store.timetableName.trim()) {
-      toast.error("Enter a timetable name");
+  const handleCreateTimetable = () => {
+    if (!name.trim()) {
+      toast.error("Please enter a timetable name");
       return;
     }
-    setLoading(true);
 
-    try {
-      const userId = user!.id;
-      const institutionId = store.institutionId!;
-
-      // Save classes and subjects to DB
-      const classIds: Record<string, string> = {};
-      const subjectIds: Record<string, string> = {};
-
-      for (const cls of store.classes) {
-        const { data: classData, error: classErr } = await supabase
-          .from("classes")
-          .insert({
-            user_id: userId,
-            institution_id: institutionId,
-            class_name: cls.className,
-            section: cls.section,
-            department: cls.department || null,
-          })
-          .select()
-          .single();
-        if (classErr) throw classErr;
-        classIds[`${cls.className}-${cls.section}`] = classData.id;
-
-        for (const sub of cls.subjects) {
-          const { data: subData, error: subErr } = await supabase
-            .from("subjects")
-            .insert({
-              user_id: userId,
-              class_id: classData.id,
-              name: sub.name,
-              type: sub.type,
-            })
-            .select()
-            .single();
-          if (subErr) throw subErr;
-          subjectIds[`${classData.id}-${sub.name}`] = subData.id;
-        }
-      }
-
-      // Save staff
-      const staffIds: Record<string, string> = {};
-      for (const st of store.staff) {
-        const { data: staffData, error: staffErr } = await supabase
-          .from("staff")
-          .insert({
-            user_id: userId,
-            institution_id: institutionId,
-            name: st.name,
-            department: st.department || null,
-          })
-          .select()
-          .single();
-        if (staffErr) throw staffErr;
-        staffIds[st.name] = staffData.id;
-
-        // Map staff to subjects
-        for (const subName of st.subjects) {
-          // find subject IDs that match this name
-          const matchingKeys = Object.keys(subjectIds).filter((k) => k.endsWith(`-${subName}`));
-          for (const key of matchingKeys) {
-            await supabase.from("staff_subjects").insert({
-              staff_id: staffData.id,
-              subject_id: subjectIds[key],
-              user_id: userId,
-            });
-          }
-        }
-      }
-
-      // Create timetable
-      const { data: ttData, error: ttErr } = await supabase
-        .from("timetables")
-        .insert({
-          user_id: userId,
-          institution_id: institutionId,
-          name: store.timetableName.toUpperCase(),
-          days: store.days,
-          hours_per_day: store.hoursPerDay,
-        })
-        .select()
-        .single();
-      if (ttErr) throw ttErr;
-
-      // Call edge function to generate timetable
-      const { data: genData, error: genErr } = await supabase.functions.invoke("generate-timetable", {
-        body: { timetableId: ttData.id },
-      });
-
-      if (genErr) throw genErr;
-
-      toast.success("Timetable generated successfully!");
-      store.reset();
-      navigate(`/timetable/${ttData.id}`);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to generate timetable");
-    } finally {
-      setLoading(false);
+    if (daysCount < 1 || daysCount > 7) {
+      toast.error("Days per week must be between 1 and 7");
+      return;
     }
+
+    if (hoursPerDay < 1 || hoursPerDay > 12) {
+      toast.error("Hours per day must be between 1 and 12");
+      return;
+    }
+
+    // Update store with the setup values
+    store.setTimetableName(name);
+    store.setDays(daysCount);
+    store.setHoursPerDay(hoursPerDay);
+    store.setAllocationMode(allocationMode as "default" | "custom");
+
+    toast.success("Timetable setup complete!");
+    navigate("/create/classes");
   };
 
   return (
-    <div className="min-h-screen bg-background hero-grid p-6">
-      <div className="max-w-3xl mx-auto">
-        <BackButton to="/create/staff" />
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-8">
-          <h1 className="font-display text-3xl font-bold text-primary">TIMETABLE SETUP</h1>
-          <p className="text-muted-foreground mt-1">Configure and generate your timetable</p>
-        </motion.div>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 p-6">
+      <div className="max-w-4xl mx-auto">
+        <BackButton to="/create" />
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-card rounded-2xl p-6 mt-6 space-y-6"
+          className="mt-8"
         >
-          <div className="space-y-2">
-            <Label>TIMETABLE NAME</Label>
-            <Input
-              value={store.timetableName}
-              onChange={(e) => store.setTimetableName(e.target.value)}
-              className="uppercase-input"
-              placeholder="TNC 2026 TIMETABLE"
-            />
-          </div>
-
-          <div className="space-y-3">
-            <Label>NUMBER OF DAYS: {store.days}</Label>
-            <Slider
-              value={[store.days]}
-              onValueChange={([v]) => store.setDays(v)}
-              min={4}
-              max={8}
-              step={1}
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <Label>HOURS PER DAY: {store.hoursPerDay}</Label>
-            <Slider
-              value={[store.hoursPerDay]}
-              onValueChange={([v]) => store.setHoursPerDay(v)}
-              min={4}
-              max={8}
-              step={1}
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
-            </div>
-          </div>
-
-          {unassigned.length > 0 && (
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-              <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-amber-800">Unassigned subjects</p>
-                <p className="text-xs text-amber-600 mt-1">
-                  The following subjects have no staff: {unassigned.join(", ")}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="text-sm text-muted-foreground space-y-1">
-            <p>• {store.classes.length} class(es) configured</p>
-            <p>• {store.staff.length} staff member(s) configured</p>
-            <p>• {allSubjects.length} unique subject(s)</p>
-          </div>
+          <h1 className="font-display text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            CONFIGURE YOUR TIMETABLE
+          </h1>
+          <p className="text-muted-foreground mt-4">
+            Set up the basic details for your timetable
+          </p>
         </motion.div>
 
-        <div className="mt-8 flex justify-end">
-          <Button onClick={handleGenerate} disabled={loading} className="btn-glow px-8" size="lg">
-            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            GENERATE TIMETABLE
-          </Button>
+        {/* Breadcrumb Navigation */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="mt-8 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+        >
+          <span className="text-xs bg-primary/20 text-primary px-3 py-1 rounded-full font-medium">1. SETUP</span>
+          <span className="text-xs opacity-50">→</span>
+          <span className="text-xs bg-primary/10 text-primary/60 px-3 py-1 rounded-full font-medium">2. CLASSES</span>
+          <span className="text-xs opacity-50">→</span>
+          <span className="text-xs bg-primary/10 text-primary/60 px-3 py-1 rounded-full font-medium">3. STAFF</span>
+          <span className="text-xs opacity-50">→</span>
+          <span className="text-xs bg-primary/10 text-primary/60 px-3 py-1 rounded-full font-medium">4. THEME</span>
+        </motion.div>
+
+        {/* Setup Cards */}
+        <div className="mt-12 grid md:grid-cols-3 gap-6">
+          {/* Timetable Name Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <Card className="glass-card border border-border h-full hover:border-primary/50 transition-colors">
+              <CardHeader className="bg-gradient-to-r from-primary/20 to-primary/10 border-b border-primary/10 rounded-t-lg">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <FileText className="h-5 w-5 text-primary" />
+                  Timetable Name
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g., Computer Science 2024-25"
+                  className="bg-background/50 border-border focus:border-primary focus:ring-primary"
+                />
+                <p className="text-xs text-muted-foreground mt-3">
+                  Give your timetable a descriptive name for easy identification
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Days Per Week Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+          >
+            <Card className="glass-card border border-border h-full hover:border-secondary/50 transition-colors">
+              <CardHeader className="bg-gradient-to-r from-secondary/20 to-secondary/10 border-b border-secondary/10 rounded-t-lg">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Calendar className="h-5 w-5 text-secondary" />
+                  Days Per Week
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-7 gap-2 mb-4">
+                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                    <button
+                      key={day}
+                      onClick={() => setDaysCount(day)}
+                      className={`h-10 rounded-lg font-semibold text-sm transition-all ${
+                        daysCount === day
+                          ? "bg-gradient-to-r from-secondary to-secondary-dark text-white shadow-lg shadow-secondary/40 scale-105"
+                          : "bg-secondary/10 text-secondary hover:bg-secondary/20"
+                      }`}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Selected: {daysCount} {daysCount === 1 ? "day" : "days"} per week
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Hours Per Day Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+          >
+            <Card className="glass-card border border-border h-full hover:border-accent/50 transition-colors">
+              <CardHeader className="bg-gradient-to-r from-accent/20 to-accent/10 border-b border-accent/10 rounded-t-lg">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Clock className="h-5 w-5 text-accent" />
+                  Hours Per Day
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((hours) => (
+                    <button
+                      key={hours}
+                      onClick={() => setHoursPerDay(hours)}
+                      className={`h-10 rounded-lg font-semibold text-sm transition-all ${
+                        hoursPerDay === hours
+                          ? "bg-gradient-to-r from-accent to-orange-600 text-white shadow-lg shadow-accent/40 scale-105"
+                          : "bg-accent/10 text-accent hover:bg-accent/20"
+                      }`}
+                    >
+                      {hours}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Selected: {hoursPerDay} {hoursPerDay === 1 ? "hour" : "hours"} per day
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
+
+        {/* Summary Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="mt-8"
+        >
+          <Card className="glass-card border border-border bg-gradient-to-r from-primary/5 via-secondary/5 to-accent/5">
+            <CardHeader>
+              <CardTitle className="text-lg">Configuration Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Timetable Name</p>
+                  <p className="font-semibold text-lg">{name || "Not Set"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Schedule</p>
+                  <p className="font-semibold text-lg">
+                    {daysCount} days × {hoursPerDay} hours
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Total Slots</p>
+                  <p className="font-semibold text-lg">{daysCount * hoursPerDay} slots</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Allocation Mode Selection */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.55 }}
+          className="mt-8"
+        >
+          <Card className="glass-card border border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Settings className="h-5 w-5 text-primary" />
+                Allocation Mode
+              </CardTitle>
+              <p className="text-sm text-muted-foreground mt-2">
+                Choose how subjects will be allocated in the timetable
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-2 gap-4">
+                {/* Default Allotment */}
+                <button
+                  onClick={() => setAllocationMode("default")}
+                  className={`p-6 rounded-xl border-2 transition-all text-left ${
+                    allocationMode === "default"
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-background/50 hover:border-primary/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Zap className={`h-5 w-5 flex-shrink-0 mt-1 ${
+                      allocationMode === "default" ? "text-primary" : "text-muted-foreground"
+                    }`} />
+                    <div>
+                      <h3 className="font-semibold text-base">Default Allotment</h3>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        System automatically distributes subjects across time slots based on subject type (CORE, ALLIED, SEC)
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Custom Allotment */}
+                <button
+                  onClick={() => setAllocationMode("custom")}
+                  className={`p-6 rounded-xl border-2 transition-all text-left ${
+                    allocationMode === "custom"
+                      ? "border-secondary bg-secondary/10"
+                      : "border-border bg-background/50 hover:border-secondary/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Settings className={`h-5 w-5 flex-shrink-0 mt-1 ${
+                      allocationMode === "custom" ? "text-secondary" : "text-muted-foreground"
+                    }`} />
+                    <div>
+                      <h3 className="font-semibold text-base">Custom Allotment</h3>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        You specify the exact number of hours for each subject per week. System validates total hours
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+
+              {/* Mode Info */}
+              <div className="mt-4 p-4 rounded-lg bg-background/50 border border-border">
+                <p className="text-sm">
+                  {allocationMode === "default" 
+                    ? "📊 With Default Allotment, focus on scheduling class time and staff availability. The system handles subject distribution automatically."
+                    : "⚙️ With Custom Allotment, specify exact hours per subject in Class Details (e.g., Math: 5 hours, Science: 4 hours). Total must equal available slots."}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Navigation Buttons */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="mt-8 flex gap-4"
+        >
+          <Button
+            variant="outline"
+            onClick={() => navigate("/create")}
+            className="flex-1"
+          >
+            Back
+          </Button>
+          <Button
+            onClick={handleCreateTimetable}
+            className="flex-1 bg-gradient-to-r from-primary to-primary-dark hover:shadow-lg hover:shadow-primary/50"
+          >
+            NEXT → CLASS DETAILS
+          </Button>
+        </motion.div>
       </div>
     </div>
   );

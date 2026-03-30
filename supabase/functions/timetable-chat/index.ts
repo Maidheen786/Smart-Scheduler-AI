@@ -11,8 +11,29 @@ serve(async (req) => {
 
   try {
     const { messages, userId } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    
+    // Try to get API key - support multiple providers
+    const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    const groqKey = Deno.env.get("GROQ_API_KEY");
+    
+    console.log("Checking API keys:", {
+      hasAnthropicKey: !!claudeKey,
+      hasOpenaiKey: !!openaiKey,
+      hasGroqKey: !!groqKey,
+    });
+
+    if (!claudeKey && !openaiKey && !groqKey) {
+      const errorMsg = "No AI API keys configured. Please set OPENAI_API_KEY in Supabase Secrets.";
+      console.error(errorMsg);
+      return new Response(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: errorMsg } }] })}\ndata: [DONE]\n\n`,
+        { 
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" } 
+        }
+      );
+    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -63,7 +84,8 @@ serve(async (req) => {
           const staffMap: Record<string, string> = {};
           (staffList || []).forEach((s: any) => { staffMap[s.id] = s.name; });
 
-          const dayNames = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN", "DAY8"];
+          // Generate day names dynamically
+          const dayNames = Array.from({ length: tt.days }, (_, i) => `Day ${i + 1}`);
 
           // Group by class
           const byClass: Record<string, any[]> = {};
@@ -92,53 +114,101 @@ serve(async (req) => {
 You have access to the user's timetable data below. Use it to answer their questions accurately.
 Always be concise and helpful. Format your answers clearly.
 If asked about a specific class, hour, day, or staff - look up the exact data and respond.
+You can also suggest substitutions when staff is absent, analyze workloads, and provide insights.
 
 TIMETABLE DATA:
 ${timetableContext}`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...(messages || []),
-        ],
-        stream: true,
-      }),
-    });
+    // Use Groq API (free tier available)
+    if (!groqKey) {
+      console.error("Groq key is not set even though it was checked earlier");
+      return new Response(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "Groq API key not configured in Supabase. Please add GROQ_API_KEY to Secrets and wait 2-3 minutes." } }] })}\ndata: [DONE]\n\n`,
+        { 
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" } 
+        }
+      );
+    }
+
+    let response: Response;
+    try {
+      console.log("Calling Groq API with key starting with:", groqKey.substring(0, 10));
+      response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${groqKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...(messages || []),
+          ],
+          stream: true,
+          temperature: 0.7,
+          max_tokens: 1000,
+        }),
+      });
+    } catch (fetchErr: any) {
+      console.error("Fetch error:", fetchErr);
+      throw new Error(`Failed to connect to AI service: ${fetchErr.message}`);
+    }
 
     if (!response.ok) {
       const status = response.status;
+      const errorText = await response.text();
+      console.error(`AI API error (${status}):`, errorText);
+      
       if (status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again later." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "Rate limit exceeded. Please wait a moment and try again." } }] })}\ndata: [DONE]\n\n`,
+          { 
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" } 
+          }
+        );
       }
-      if (status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (status === 401 || status === 403) {
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "AI service authentication failed. Please check your Groq API key configuration in Supabase." } }] })}\ndata: [DONE]\n\n`,
+          { 
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" } 
+          }
+        );
       }
-      const t = await response.text();
-      console.error("AI gateway error:", status, t);
-      throw new Error("AI gateway error");
+      
+      return new Response(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: `Error from AI service: ${status}. ${errorText}` } }] })}\ndata: [DONE]\n\n`,
+        { 
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" } 
+        }
+      );
     }
 
-    return new Response(response.body, {
+    // Create a transform stream to forward the response
+    const transformStream = new TransformStream({
+      async transform(chunk: Uint8Array, controller: TransformStreamDefaultController) {
+        const text = new TextDecoder().decode(chunk);
+        controller.enqueue(new TextEncoder().encode(text));
+      }
+    });
+
+    return new Response(response.body!.pipeThrough(transformStream), {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (e: any) {
     console.error("timetable-chat error:", e);
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const errorMessage = e.message || "An error occurred";
+    return new Response(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: `Error: ${errorMessage}` } }] })}\ndata: [DONE]\n\n`,
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      }
+    );
   }
 });
